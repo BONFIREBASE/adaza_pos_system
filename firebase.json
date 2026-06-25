@@ -1,0 +1,1 @@
+{"firestore":{"rules":"firestore.rules","indexes":"firestore.indexes.json"},"flutter":{"platforms":{"dart":{"lib/firebase_options.dart":{"projectId":"adazacloud","configurations":{"web":"1:825018453020:web:b32185d96e92f0a0c263d9"}}}}}}
