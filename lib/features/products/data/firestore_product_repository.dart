@@ -1,12 +1,15 @@
+import '../../../core/services/activity/activity_log_service.dart';
 import '../../../core/services/sync/sync_service.dart';
+import '../../activity/domain/activity_log.dart';
 import '../domain/product.dart';
 import '../domain/product_repository.dart';
 
 /// [ProductRepository] backed by the [SyncService] (Req 2, 4.2).
 class FirestoreProductRepository implements ProductRepository {
-  FirestoreProductRepository(this._sync);
+  FirestoreProductRepository(this._sync, [this._log]);
 
   final SyncService _sync;
+  final ActivityLogService? _log;
   static const _collection = 'products';
 
   @override
@@ -38,6 +41,8 @@ class FirestoreProductRepository implements ProductRepository {
       );
     }
     final id = await _sync.setDocument(_collection, null, product.toMap());
+    _log?.log(ActivityKind.productCreated,
+        'Added product "${product.name}" (₱${product.price.toStringAsFixed(2)})');
     return product.copyWith(id: id);
   }
 
@@ -51,14 +56,20 @@ class FirestoreProductRepository implements ProductRepository {
       );
     }
     await _sync.updateDocument(_collection, product.id, product.toMap());
+    _log?.log(ActivityKind.productUpdated, 'Updated product "${product.name}"');
   }
 
   @override
-  Future<void> delete(String id) => _sync.deleteDocument(_collection, id);
+  Future<void> delete(String id) async {
+    await _sync.deleteDocument(_collection, id);
+    _log?.log(ActivityKind.productDeleted, 'Deleted a product');
+  }
 
   @override
-  Future<void> adjustStock(String id, int newQuantity) =>
-      _sync.updateDocument(_collection, id, {'stockQuantity': newQuantity});
+  Future<void> adjustStock(String id, int newQuantity) async {
+    await _sync.updateDocument(_collection, id, {'stockQuantity': newQuantity});
+    _log?.log(ActivityKind.stockAdjusted, 'Set stock to $newQuantity units');
+  }
 
   void _validate(Product product) {
     if (product.name.trim().isEmpty) {

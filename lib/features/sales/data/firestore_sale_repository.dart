@@ -1,13 +1,16 @@
+import '../../../core/services/activity/activity_log_service.dart';
 import '../../../core/services/sync/sync_service.dart';
+import '../../activity/domain/activity_log.dart';
 import '../../finance/domain/finance_record.dart';
 import '../domain/sale.dart';
 import '../domain/sale_repository.dart';
 
 /// [SaleRepository] that records sales atomically with stock + income updates.
 class FirestoreSaleRepository implements SaleRepository {
-  FirestoreSaleRepository(this._sync);
+  FirestoreSaleRepository(this._sync, [this._log]);
 
   final SyncService _sync;
+  final ActivityLogService? _log;
   static const _salesCollection = 'sales';
   static const _productsCollection = 'products';
   static const _financeCollection = 'finance';
@@ -29,7 +32,7 @@ class FirestoreSaleRepository implements SaleRepository {
     final now = DateTime.now();
     final sale = Sale(id: '_', lines: lines, createdAt: now);
 
-    return _sync.runTransaction<Sale>((txn) async {
+    final recorded = await _sync.runTransaction<Sale>((txn) async {
       // Validate and compute new stock for each line (Req 4.1, 4.5).
       final newQuantities = <String, int>{};
       for (final line in lines) {
@@ -69,11 +72,16 @@ class FirestoreSaleRepository implements SaleRepository {
 
       return Sale(id: saleId, lines: lines, createdAt: now);
     });
+
+    final units = lines.fold<int>(0, (s, l) => s + l.quantity);
+    _log?.log(ActivityKind.saleRecorded,
+        'Recorded a sale of ₱${recorded.total.toStringAsFixed(2)} ($units item${units == 1 ? '' : 's'})');
+    return recorded;
   }
 
   @override
   Future<void> voidSale(String saleId) async {
-    return _sync.runTransaction<void>((txn) async {
+    await _sync.runTransaction<void>((txn) async {
       final saleData = await txn.get(_salesCollection, saleId);
       if (saleData == null) {
         throw const SaleException('Sale not found.');
@@ -98,5 +106,6 @@ class FirestoreSaleRepository implements SaleRepository {
       txn.delete(_salesCollection, saleId);
       txn.delete(_financeCollection, 'sale_$saleId');
     });
+    _log?.log(ActivityKind.saleVoided, 'Voided a sale');
   }
 }

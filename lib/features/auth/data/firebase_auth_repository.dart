@@ -23,7 +23,14 @@ class FirebaseAuthRepository implements AuthRepository {
 
   AppUser? _cached;
 
-  Future<AppUser?> _resolve(fb.User user, Map<String, dynamic>? data) async {
+  /// Builds an [AppUser] from the live `users/{uid}` doc data and the live
+  /// `roles/{roleId}` doc data. Returns null when access should be denied
+  /// (no role, disabled, or an invalid/unknown role).
+  AppUser? _resolveSync(
+    fb.User user,
+    Map<String, dynamic>? data,
+    Map<String, dynamic>? roleData,
+  ) {
     if (data == null || data['role'] == null || data['active'] == false) {
       return null;
     }
@@ -35,9 +42,7 @@ class FirebaseAuthRepository implements AuthRepository {
       permissions = AppPermission.values.toSet();
       roleName = 'Owner';
     } else {
-      final roleDoc = await _db.collection('roles').doc(roleId).get();
-      final roleData = roleDoc.data();
-      if (!roleDoc.exists || roleData == null) return null; // invalid role
+      if (roleData == null) return null; // missing / invalid role
       permissions = ((roleData['permissions'] as List<dynamic>?) ?? [])
           .map((e) => AppPermission.fromName(e as String?))
           .whereType<AppPermission>()
@@ -61,29 +66,97 @@ class FirebaseAuthRepository implements AuthRepository {
   Stream<AppUser?> authStateChanges() {
     late StreamController<AppUser?> controller;
     StreamSubscription<fb.User?>? authSub;
-    StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>? docSub;
+    StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>? userSub;
+    StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>? roleSub;
+
+    fb.User? fbUser;
+    Map<String, dynamic>? userData;
+    Map<String, dynamic>? roleData;
+    String? watchedRoleId;
+    bool roleLoaded = false;
+
+    void emit() {
+      final user = fbUser;
+      if (user == null) {
+        _cached = null;
+        if (!controller.isClosed) controller.add(null);
+        return;
+      }
+      final data = userData;
+      // Wait until the user doc has loaded before emitting anything.
+      if (data == null) return;
+      final roleId = data['role'] as String?;
+      final active = data['active'] != false;
+      // For an active, non-owner account, hold off emitting until the role doc
+      // has loaded at least once — avoids a transient "signed out" flash that
+      // would bounce the user to the sign-in screen.
+      if (active &&
+          roleId != null &&
+          roleId != kOwnerRoleId &&
+          !roleLoaded) {
+        return;
+      }
+      final mapped = _resolveSync(user, data, roleData);
+      _cached = mapped;
+      if (!controller.isClosed) controller.add(mapped);
+    }
+
+    // (Re)subscribe to the role document so permission edits apply live.
+    void watchRole(String? roleId) {
+      if (roleId == watchedRoleId) return;
+      watchedRoleId = roleId;
+      roleSub?.cancel();
+      roleSub = null;
+      roleData = null;
+      roleLoaded = false;
+      if (roleId == null || roleId == kOwnerRoleId) {
+        roleLoaded = true; // owner needs no role doc
+        return;
+      }
+      roleSub = _db.collection('roles').doc(roleId).snapshots().listen(
+        (snap) {
+          roleData = snap.data();
+          roleLoaded = true;
+          emit();
+        },
+        onError: (_) {
+          roleLoaded = true;
+          emit();
+        },
+      );
+    }
 
     controller = StreamController<AppUser?>(
       onListen: () {
         authSub = _auth.authStateChanges().listen((user) {
-          docSub?.cancel();
+          fbUser = user;
+          userSub?.cancel();
+          userSub = null;
+          roleSub?.cancel();
+          roleSub = null;
+          watchedRoleId = null;
+          userData = null;
+          roleData = null;
+          roleLoaded = false;
           if (user == null) {
-            _cached = null;
-            controller.add(null);
+            emit();
             return;
           }
-          docSub = _db.collection('users').doc(user.uid).snapshots().listen(
-            (snap) async {
-              final mapped = await _resolve(user, snap.data());
-              _cached = mapped;
-              if (!controller.isClosed) controller.add(mapped);
+          userSub = _db.collection('users').doc(user.uid).snapshots().listen(
+            (snap) {
+              userData = snap.data();
+              watchRole(userData?['role'] as String?);
+              emit();
             },
-            onError: (_) => controller.add(null),
+            onError: (_) {
+              if (!controller.isClosed) controller.add(null);
+            },
           );
         });
       },
       onCancel: () async {
-        await docSub?.cancel();
+        await roleSub?.cancel();
+        await userSub?.cancel();
         await authSub?.cancel();
       },
     );
@@ -115,7 +188,14 @@ class FirebaseAuthRepository implements AuthRepository {
     }
 
     final snap = await _db.collection('users').doc(user.uid).get();
-    final mapped = await _resolve(user, snap.data());
+    final data = snap.data();
+    Map<String, dynamic>? roleData;
+    final roleId = data?['role'] as String?;
+    if (roleId != null && roleId != kOwnerRoleId) {
+      final roleDoc = await _db.collection('roles').doc(roleId).get();
+      roleData = roleDoc.data();
+    }
+    final mapped = _resolveSync(user, data, roleData);
     if (mapped == null) {
       await _auth.signOut();
       throw const AuthException(

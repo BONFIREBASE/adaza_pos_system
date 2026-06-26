@@ -1,8 +1,10 @@
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
 
+import '../../../core/services/activity/activity_log_service.dart';
 import '../../../core/services/sync/sync_service.dart';
 import '../../../firebase_options.dart';
+import '../../activity/domain/activity_log.dart';
 import '../domain/management_repository.dart';
 import '../domain/staff_member.dart';
 
@@ -10,9 +12,10 @@ import '../domain/staff_member.dart';
 /// secondary Firebase app for creating accounts without disturbing the current
 /// signed-in session.
 class FirestoreManagementRepository implements ManagementRepository {
-  FirestoreManagementRepository(this._sync);
+  FirestoreManagementRepository(this._sync, [this._log]);
 
   final SyncService _sync;
+  final ActivityLogService? _log;
   static const _collection = 'users';
 
   @override
@@ -72,6 +75,8 @@ class FirestoreManagementRepository implements ManagementRepository {
         ...member.toMap(),
         'mustChangePassword': true,
       });
+      _log?.log(ActivityKind.accountCreated,
+          'Created account for "${name.trim().isEmpty ? email.trim() : name.trim()}"');
     } on FirebaseAuthException catch (e) {
       throw ManagementException(switch (e.code) {
         'email-already-in-use' => 'That email already has an account.',
@@ -90,6 +95,8 @@ class FirestoreManagementRepository implements ManagementRepository {
   Future<void> updateStaff(StaffMember member) async {
     try {
       await _sync.updateDocument(_collection, member.uid, member.toMap());
+      _log?.log(ActivityKind.accountUpdated,
+          'Updated account "${member.displayName}"');
     } catch (_) {
       throw const ManagementException('Could not update the account.');
     }
@@ -99,6 +106,9 @@ class FirestoreManagementRepository implements ManagementRepository {
   Future<void> setActive(String uid, bool active) async {
     try {
       await _sync.updateDocument(_collection, uid, {'active': active});
+      _log?.log(
+          active ? ActivityKind.accountEnabled : ActivityKind.accountDisabled,
+          '${active ? 'Enabled' : 'Disabled'} an account');
     } catch (_) {
       throw const ManagementException('Could not update the account.');
     }
@@ -108,6 +118,7 @@ class FirestoreManagementRepository implements ManagementRepository {
   Future<void> removeStaff(String uid) async {
     try {
       await _sync.deleteDocument(_collection, uid);
+      _log?.log(ActivityKind.accountRemoved, 'Removed an account');
     } catch (_) {
       throw const ManagementException('Could not remove the account.');
     }

@@ -10,6 +10,7 @@ import '../../../core/providers.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/widgets/app_snackbar.dart';
+import '../../activity/domain/activity_log.dart';
 import '../../auth/domain/app_user.dart';
 import '../../auth/domain/auth_repository.dart';
 import 'user_avatar.dart';
@@ -195,6 +196,9 @@ class _ChangePasswordModalState extends ConsumerState<_ChangePasswordModal> {
             currentPassword: _current.text,
             newPassword: _next.text,
           );
+      ref
+          .read(activityLogProvider)
+          ?.log(ActivityKind.passwordChanged, 'Changed their password');
       if (!mounted) return;
       AppSnack.success(context, 'Password changed.');
       Navigator.pop(context);

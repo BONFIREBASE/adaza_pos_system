@@ -1,12 +1,15 @@
+import '../../../core/services/activity/activity_log_service.dart';
 import '../../../core/services/sync/sync_service.dart';
+import '../../activity/domain/activity_log.dart';
 import '../domain/role.dart';
 import '../domain/roles_repository.dart';
 
 /// [RolesRepository] backed by the `roles` collection via [SyncService].
 class FirestoreRolesRepository implements RolesRepository {
-  FirestoreRolesRepository(this._sync);
+  FirestoreRolesRepository(this._sync, [this._log]);
 
   final SyncService _sync;
+  final ActivityLogService? _log;
   static const _collection = 'roles';
 
   @override
@@ -37,6 +40,7 @@ class FirestoreRolesRepository implements RolesRepository {
     }
     try {
       await _sync.setDocument(_collection, id, role.toMap());
+      _log?.log(ActivityKind.roleCreated, 'Created role "${role.name}"');
     } catch (_) {
       throw const RoleException('Could not create the role.');
     }
@@ -52,6 +56,7 @@ class FirestoreRolesRepository implements RolesRepository {
     }
     try {
       await _sync.updateDocument(_collection, role.id, role.toMap());
+      _log?.log(ActivityKind.roleUpdated, 'Updated role "${role.name}"');
     } catch (_) {
       throw const RoleException('Could not update the role.');
     }
@@ -64,6 +69,7 @@ class FirestoreRolesRepository implements RolesRepository {
     }
     try {
       await _sync.deleteDocument(_collection, id);
+      _log?.log(ActivityKind.roleDeleted, 'Deleted a role');
     } catch (_) {
       throw const RoleException('Could not delete the role.');
     }

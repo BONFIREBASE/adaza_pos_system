@@ -10,12 +10,15 @@ import '../features/finance/domain/finance_repository.dart';
 import '../features/management/data/firestore_management_repository.dart';
 import '../features/management/domain/management_repository.dart';
 import '../features/products/data/firestore_product_repository.dart';
+import '../features/products/domain/product.dart';
 import '../features/products/domain/product_repository.dart';
 import '../features/roles/data/firestore_roles_repository.dart';
 import '../features/roles/domain/role.dart';
 import '../features/roles/domain/roles_repository.dart';
 import '../features/sales/data/firestore_sale_repository.dart';
 import '../features/sales/domain/sale_repository.dart';
+import '../features/activity/domain/activity_log.dart';
+import 'services/activity/activity_log_service.dart';
 import 'services/scan/camera_scanner.dart';
 import 'services/scan/scan_source.dart';
 import 'services/sync/firestore_sync_service.dart';
@@ -66,30 +69,81 @@ final syncServiceProvider = Provider<SyncService?>((ref) {
 // --- Scanning ----------------------------------------------------------------
 final scanSourceProvider = Provider<ScanSource>((ref) => CameraScanner());
 
+// --- Activity log (append-only audit trail) ----------------------------------
+final activityLogProvider = Provider<ActivityLogService?>((ref) {
+  final sync = ref.watch(syncServiceProvider);
+  if (sync == null) return null;
+  return ActivityLogService(
+    sync: sync,
+    actor: () => ref.read(currentUserProvider),
+  );
+});
+
+/// Live feed of recent audit-log entries (newest first); empty while signed out.
+final activityFeedProvider = StreamProvider<List<ActivityLog>>((ref) {
+  final log = ref.watch(activityLogProvider);
+  if (log == null) return Stream.value(const []);
+  return log.watchRecent();
+});
+
+/// Products currently at or below their low-stock threshold (drives alerts).
+final lowStockProductsProvider = StreamProvider<List<Product>>((ref) {
+  final repo = ref.watch(productRepositoryProvider);
+  if (repo == null) return Stream.value(const []);
+  return repo
+      .watchProducts()
+      .map((items) => items.where((p) => p.isLowStock).toList()
+        ..sort((a, b) => a.stockQuantity.compareTo(b.stockQuantity)));
+});
+
+/// Tracks the timestamp the current user last opened notifications, so the bell
+/// can surface an unread count. Session-scoped (resets on reload).
+final notificationsSeenProvider =
+    NotifierProvider<NotificationsSeenNotifier, DateTime>(
+  NotificationsSeenNotifier.new,
+);
+
+class NotificationsSeenNotifier extends Notifier<DateTime> {
+  @override
+  DateTime build() => DateTime.now();
+
+  void markSeen() => state = DateTime.now();
+}
+
 // --- Feature repositories ----------------------------------------------------
 final productRepositoryProvider = Provider<ProductRepository?>((ref) {
   final sync = ref.watch(syncServiceProvider);
-  return sync == null ? null : FirestoreProductRepository(sync);
+  return sync == null
+      ? null
+      : FirestoreProductRepository(sync, ref.watch(activityLogProvider));
 });
 
 final saleRepositoryProvider = Provider<SaleRepository?>((ref) {
   final sync = ref.watch(syncServiceProvider);
-  return sync == null ? null : FirestoreSaleRepository(sync);
+  return sync == null
+      ? null
+      : FirestoreSaleRepository(sync, ref.watch(activityLogProvider));
 });
 
 final financeRepositoryProvider = Provider<FinanceRepository?>((ref) {
   final sync = ref.watch(syncServiceProvider);
-  return sync == null ? null : FirestoreFinanceRepository(sync);
+  return sync == null
+      ? null
+      : FirestoreFinanceRepository(sync, ref.watch(activityLogProvider));
 });
 
 final managementRepositoryProvider = Provider<ManagementRepository?>((ref) {
   final sync = ref.watch(syncServiceProvider);
-  return sync == null ? null : FirestoreManagementRepository(sync);
+  return sync == null
+      ? null
+      : FirestoreManagementRepository(sync, ref.watch(activityLogProvider));
 });
 
 final rolesRepositoryProvider = Provider<RolesRepository?>((ref) {
   final sync = ref.watch(syncServiceProvider);
-  return sync == null ? null : FirestoreRolesRepository(sync);
+  return sync == null
+      ? null
+      : FirestoreRolesRepository(sync, ref.watch(activityLogProvider));
 });
 
 /// Live list of roles; empty while signed out.

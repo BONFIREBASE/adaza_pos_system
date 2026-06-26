@@ -84,5 +84,14 @@ service cloud.firestore {
       allow create: if has('recordSales') || has('manageFinance');
       allow update, delete: if has('manageFinance');
     }
+
+    // Audit log: append-only and immutable. Any account with a role may append
+    // an entry (recording their own actions); only managers may read it; nobody
+    // may edit or delete entries, preserving the integrity of the trail.
+    match /activity/{id} {
+      allow read: if has('manageUsers');
+      allow create: if hasAccess();
+      allow update, delete: if false;
+    }
   }
 }

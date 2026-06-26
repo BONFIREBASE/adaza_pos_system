@@ -4,6 +4,8 @@ import 'package:go_router/go_router.dart';
 
 import '../providers.dart';
 import '../theme/app_colors.dart';
+import 'notification_bell.dart';
+import '../../features/activity/presentation/activity_log_modal.dart';
 import '../../features/auth/domain/app_user.dart';
 import '../../features/export/export_modal.dart';
 import '../../features/profile/presentation/profile_modals.dart';
@@ -86,6 +88,7 @@ class AppNavScaffold extends ConsumerWidget {
         title: Text(title),
         actions: [
           ...?actions,
+          if (user != null) const NotificationBell(),
           if (user != null) _ProfileMenu(user: user),
           const SizedBox(width: 8),
         ],
@@ -213,6 +216,7 @@ class _ProfileMenu extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final canExport = user.can(AppPermission.manageFinance);
+    final canViewLog = user.can(AppPermission.manageUsers);
     final isOwner = user.isOwner;
     final compact = MediaQuery.sizeOf(context).width < 560;
 
@@ -233,6 +237,8 @@ class _ProfileMenu extends ConsumerWidget {
             showExportModal(context);
           case 'settings':
             showSettingsModal(context);
+          case 'activity':
+            showActivityLogModal(context);
           case 'about':
             showAboutModal(context);
           case 'signout':
@@ -294,6 +300,15 @@ class _ProfileMenu extends ConsumerWidget {
             child: ListTile(
               leading: Icon(Icons.settings_outlined),
               title: Text('Settings'),
+              contentPadding: EdgeInsets.zero,
+            ),
+          ),
+        if (canViewLog)
+          const PopupMenuItem(
+            value: 'activity',
+            child: ListTile(
+              leading: Icon(Icons.history),
+              title: Text('Activity log'),
               contentPadding: EdgeInsets.zero,
             ),
           ),
