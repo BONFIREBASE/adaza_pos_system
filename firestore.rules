@@ -1,10 +1,11 @@
 rules_version = '2';
 
-// ADAZA POS security rules.
-// - Business data (products, sales, finance) is readable/writable by any
-//   authenticated user (Owner / Admin / Cashier).
-// - The `users` collection holds each account's role and is writable only by
-//   the Owner. The first Owner document is created once in the Firebase console.
+// ADAZA POS security rules — permission-based, with data-driven roles.
+//
+// - `roles/{roleId}` holds each role's permission list (Owner only writes it).
+// - `users/{uid}` holds each account's role id + profile + status.
+// - A user's effective permissions = the permissions of their role.
+// - The reserved 'owner' role always has full access.
 service cloud.firestore {
   match /databases/{database}/documents {
 
@@ -12,67 +13,76 @@ service cloud.firestore {
       return request.auth != null;
     }
 
-    function roleOf(uid) {
-      return get(/databases/$(database)/documents/users/$(uid)).data.role;
-    }
-
     function hasAccess() {
       return signedIn()
         && exists(/databases/$(database)/documents/users/$(request.auth.uid));
     }
 
+    function myRoleId() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role;
+    }
+
     function isOwner() {
-      return signedIn()
-        && exists(/databases/$(database)/documents/users/$(request.auth.uid))
-        && roleOf(request.auth.uid) == 'owner';
+      return hasAccess() && myRoleId() == 'owner';
     }
 
-    // Owner or Admin — the roles allowed to manage the catalog.
-    function canManage() {
-      return hasAccess() && roleOf(request.auth.uid) in ['owner', 'admin'];
+    // Whether the signed-in user's role grants permission p.
+    function has(p) {
+      return hasAccess() && (
+        isOwner() ||
+        (exists(/databases/$(database)/documents/roles/$(myRoleId()))
+          && get(/databases/$(database)/documents/roles/$(myRoleId()))
+              .data.permissions.hasAny([p]))
+      );
     }
 
-    function isAdminActor() {
-      return hasAccess() && roleOf(request.auth.uid) == 'admin';
-    }
-
-    // True when a product update only changes stock (e.g. a cashier's sale).
+    // A product update that changes only stock (e.g. a cashier's sale).
     function onlyStockChanged() {
       return request.resource.data.diff(resource.data)
         .affectedKeys().hasOnly(['stockQuantity']);
     }
 
-    // Account roles + employment details. Anyone signed-in can read (to resolve
-    // their own role). The Owner manages everyone; an Admin may manage only
-    // Cashier accounts (cannot create/edit Owners or other Admins).
-    match /users/{uid} {
+    // Role catalog: readable by any signed-in user; only the Owner manages it.
+    match /roles/{roleId} {
       allow read: if signedIn();
-      allow create, update: if isOwner()
-        || (isAdminActor()
-            && request.resource.data.role == 'cashier'
-            && (resource == null || resource.data.role == 'cashier'));
-      // A user may edit only their own display name / photo.
-      allow update: if signedIn() && request.auth.uid == uid
-        && request.resource.data.diff(resource.data)
-            .affectedKeys().hasOnly(['name', 'photo']);
-      allow delete: if isOwner()
-        || (isAdminActor() && resource.data.role == 'cashier');
+      allow write: if isOwner();
     }
 
-    // Products: anyone signed-in can read (needed for sales/lookup). Only Owner
-    // or Admin can create/edit/delete; a Cashier may only decrement stock when
-    // recording a sale.
+    // Accounts. Managing requires 'manageUsers'. Owner accounts can only be
+    // created/changed/removed by the Owner. Any user may edit only their own
+    // name/photo.
+    match /users/{uid} {
+      allow read: if signedIn();
+      allow create, update: if
+        (has('manageUsers')
+          && (request.resource.data.role != 'owner' || isOwner())
+          && (resource == null || resource.data.role != 'owner' || isOwner()))
+        || (signedIn() && request.auth.uid == uid
+          && request.resource.data.diff(resource.data)
+              .affectedKeys().hasOnly(['name', 'photo', 'mustChangePassword']));
+      allow delete: if has('manageUsers')
+        && (resource.data.role != 'owner' || isOwner());
+    }
+
+    // Catalog: read by anyone signed-in; manage by 'manageProducts'. A cashier
+    // (recordSales) may only decrement stock when recording a sale.
     match /products/{id} {
       allow read: if hasAccess();
-      allow create, delete: if canManage();
-      allow update: if canManage() || (hasAccess() && onlyStockChanged());
+      allow create, delete: if has('manageProducts');
+      allow update: if has('manageProducts')
+        || (has('recordSales') && onlyStockChanged());
     }
 
     match /sales/{id} {
-      allow read, write: if hasAccess();
+      allow read: if hasAccess();
+      allow create: if has('recordSales') || has('manageFinance');
+      allow update, delete: if has('manageFinance');
     }
+
     match /finance/{id} {
-      allow read, write: if hasAccess();
+      allow read: if hasAccess();
+      allow create: if has('recordSales') || has('manageFinance');
+      allow update, delete: if has('manageFinance');
     }
   }
 }

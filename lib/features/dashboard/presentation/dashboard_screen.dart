@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -259,8 +261,57 @@ class _Header extends ConsumerWidget {
             ],
           ),
         ),
-        Text(DateFormat('EEE, MMM d').format(now),
-            style: const TextStyle(color: AppColors.textSecondary)),
+        const _LiveClock(),
+      ],
+    );
+  }
+}
+
+/// Live ticking clock (updates every second).
+class _LiveClock extends StatefulWidget {
+  const _LiveClock();
+
+  @override
+  State<_LiveClock> createState() => _LiveClockState();
+}
+
+class _LiveClockState extends State<_LiveClock> {
+  late final Timer _timer;
+  DateTime _now = DateTime.now();
+
+  @override
+  void initState() {
+    super.initState();
+    _timer = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (mounted) setState(() => _now = DateTime.now());
+    });
+  }
+
+  @override
+  void dispose() {
+    _timer.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.end,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(
+          DateFormat('h:mm:ss a').format(_now),
+          style: AppTheme.mono(
+            fontSize: 18,
+            fontWeight: FontWeight.w700,
+            color: AppColors.teal,
+          ),
+        ),
+        Text(
+          DateFormat('EEE, MMM d, yyyy').format(_now),
+          style: const TextStyle(
+              color: AppColors.textSecondary, fontSize: 12),
+        ),
       ],
     );
   }

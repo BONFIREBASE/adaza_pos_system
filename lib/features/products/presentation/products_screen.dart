@@ -209,8 +209,18 @@ class _ProductRow extends StatelessWidget {
                 Flexible(child: Text(product.name)),
               ],
             ),
-            subtitle: Text(
-                'Barcode ${product.barcode} - ${product.stockQuantity} in stock'),
+            subtitle: Row(
+              children: [
+                Flexible(
+                  child: Text(
+                    'Barcode ${product.barcode}',
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                _StockTag(product: product),
+              ],
+            ),
             trailing: Text(
               money.format(product.price),
               style: AppTheme.mono(
@@ -218,6 +228,39 @@ class _ProductRow extends StatelessWidget {
             ),
           ),
         ),
+      ),
+    );
+  }
+}
+
+/// Compact stock indicator: out of stock (red), low (amber), or in stock.
+class _StockTag extends StatelessWidget {
+  const _StockTag({required this.product});
+  final Product product;
+
+  @override
+  Widget build(BuildContext context) {
+    final out = product.stockQuantity <= 0;
+    final low = product.isLowStock && !out;
+    final color = out
+        ? AppColors.error
+        : (low ? AppColors.warning : AppColors.textSecondary);
+    final label = out
+        ? 'Out of stock'
+        : (low
+            ? '${product.stockQuantity} left'
+            : '${product.stockQuantity} in stock');
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: Text(
+        label,
+        style: TextStyle(
+            color: color, fontSize: 11, fontWeight: FontWeight.w700),
       ),
     );
   }

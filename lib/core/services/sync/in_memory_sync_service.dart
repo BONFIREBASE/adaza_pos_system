@@ -94,4 +94,10 @@ class _InMemoryTxn implements SyncTransaction {
     _svc._col(collection)[id] = {..._svc._col(collection)[id] ?? {}, ...data};
     _touched.add(collection);
   }
+
+  @override
+  void delete(String collection, String id) {
+    _svc._col(collection).remove(id);
+    _touched.add(collection);
+  }
 }

@@ -18,6 +18,10 @@ abstract interface class FinanceRepository {
   /// amounts (Req 6.3).
   Future<FinanceRecord> create(FinanceRecord record);
 
+  /// Updates an existing record (manager only). Sale-derived income records
+  /// should not be edited here — void the sale instead.
+  Future<void> update(FinanceRecord record);
+
   Future<void> delete(String id);
 
   /// Profit = total income - total expense for the range (Req 6.5).

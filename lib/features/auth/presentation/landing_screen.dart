@@ -110,7 +110,7 @@ class _Intro extends StatelessWidget {
   Widget build(BuildContext context) {
     final width = MediaQuery.sizeOf(context).width;
     final isCompact = width < 480;
-    final logoHeight = isCompact ? 180.0 : 280.0;
+    final logoHeight = isCompact ? 240.0 : 380.0;
 
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 24),
@@ -138,10 +138,10 @@ class _Intro extends StatelessWidget {
             'POINT OF SALE SYSTEM',
             textAlign: TextAlign.center,
             style: AppTheme.brand(
-              fontSize: isCompact ? 18 : 24,
+              fontSize: isCompact ? 22 : 30,
               fontWeight: FontWeight.w800,
               color: AppColors.teal,
-              letterSpacing: isCompact ? 3 : 5,
+              letterSpacing: isCompact ? 3 : 6,
             ),
           ),
           const SizedBox(height: 12),
@@ -149,7 +149,7 @@ class _Intro extends StatelessWidget {
             'Adaza School and Office Supplies Trading and Apparel',
             textAlign: TextAlign.center,
             style: AppTheme.brand(
-              fontSize: isCompact ? 15 : 18,
+              fontSize: isCompact ? 16 : 20,
               fontWeight: FontWeight.w600,
               color: AppColors.bronze,
               letterSpacing: 0.5,

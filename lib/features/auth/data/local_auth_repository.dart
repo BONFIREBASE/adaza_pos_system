@@ -27,11 +27,16 @@ class LocalAuthRepository implements AuthRepository {
     required String email,
     required String password,
   }) async {
-    if (email.trim().isEmpty ||
-        password != EnvConfig.passwordFor(UserRole.owner)) {
+    if (email.trim().isEmpty || password != EnvConfig.ownerPassword) {
       throw const AuthException('Invalid email or password.');
     }
-    _user = AppUser(id: 'owner', email: email.trim(), role: UserRole.owner);
+    _user = AppUser(
+      id: 'owner',
+      email: email.trim(),
+      roleId: kOwnerRoleId,
+      roleName: 'Owner',
+      permissions: AppPermission.values.toSet(),
+    );
     _controller.add(_user);
     return _user!;
   }
@@ -49,7 +54,9 @@ class LocalAuthRepository implements AuthRepository {
     _user = AppUser(
       id: u.id,
       email: u.email,
-      role: u.role,
+      roleId: u.roleId,
+      roleName: u.roleName,
+      permissions: u.permissions,
       name: name ?? u.name,
       photo: photo ?? u.photo,
     );
@@ -61,9 +68,11 @@ class LocalAuthRepository implements AuthRepository {
     required String currentPassword,
     required String newPassword,
   }) async {
-    // Demo mode: accept any current password matching the env default.
-    if (currentPassword != EnvConfig.passwordFor(UserRole.owner)) {
+    if (currentPassword != EnvConfig.ownerPassword) {
       throw const AuthException('Current password is incorrect.');
     }
   }
+
+  @override
+  Future<void> markPasswordChanged() async {}
 }

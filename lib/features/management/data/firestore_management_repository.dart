@@ -3,7 +3,6 @@ import 'package:firebase_core/firebase_core.dart';
 
 import '../../../core/services/sync/sync_service.dart';
 import '../../../firebase_options.dart';
-import '../../auth/domain/app_user.dart';
 import '../domain/management_repository.dart';
 import '../domain/staff_member.dart';
 
@@ -21,9 +20,7 @@ class FirestoreManagementRepository implements ManagementRepository {
     return _sync.watchCollection(_collection).map((rows) {
       final staff = rows.map(StaffMember.fromMap).toList()
         ..sort((a, b) {
-          // Owner first, then by name.
-          if (a.role == UserRole.owner && b.role != UserRole.owner) return -1;
-          if (b.role == UserRole.owner && a.role != UserRole.owner) return 1;
+          if (a.isOwner != b.isOwner) return a.isOwner ? -1 : 1;
           return a.displayName
               .toLowerCase()
               .compareTo(b.displayName.toLowerCase());
@@ -37,10 +34,11 @@ class FirestoreManagementRepository implements ManagementRepository {
     required String email,
     required String password,
     required String name,
-    required UserRole role,
+    required String roleId,
     required String position,
     required double salary,
     required SalaryPeriod salaryPeriod,
+    String? photo,
   }) async {
     FirebaseApp? secondary;
     try {
@@ -61,14 +59,19 @@ class FirestoreManagementRepository implements ManagementRepository {
       final member = StaffMember(
         uid: uid,
         email: email.trim(),
-        role: role,
+        roleId: roleId,
         name: name.trim(),
         position: position.trim(),
         salary: salary,
         salaryPeriod: salaryPeriod,
         active: true,
+        photo: photo,
       );
-      await _sync.setDocument(_collection, uid, member.toMap());
+      // New accounts must set their own password on first login.
+      await _sync.setDocument(_collection, uid, {
+        ...member.toMap(),
+        'mustChangePassword': true,
+      });
     } on FirebaseAuthException catch (e) {
       throw ManagementException(switch (e.code) {
         'email-already-in-use' => 'That email already has an account.',

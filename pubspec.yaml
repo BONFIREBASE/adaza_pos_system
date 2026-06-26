@@ -9,6 +9,8 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
+  flutter_web_plugins:
+    sdk: flutter
   cupertino_icons: ^1.0.8
 
   # State management
@@ -31,6 +33,9 @@ dependencies:
   # PDF reports + printing
   pdf: ^3.11.1
   printing: ^5.13.2
+
+  # On-screen barcode rendering
+  barcode_widget: ^2.0.4
 
   # Config / secrets
   flutter_dotenv: ^5.1.0

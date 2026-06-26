@@ -22,22 +22,26 @@ class StaffMember {
   const StaffMember({
     required this.uid,
     required this.email,
-    required this.role,
+    required this.roleId,
     this.name = '',
     this.position = '',
     this.salary = 0,
     this.salaryPeriod = SalaryPeriod.monthly,
     this.active = true,
+    this.photo,
   });
 
   final String uid;
   final String email;
-  final UserRole role;
+  final String roleId;
   final String name;
   final String position;
   final double salary;
   final SalaryPeriod salaryPeriod;
   final bool active;
+  final String? photo;
+
+  bool get isOwner => roleId == kOwnerRoleId;
 
   String get displayName => name.trim().isEmpty ? email : name;
 
@@ -50,22 +54,24 @@ class StaffMember {
 
   Map<String, dynamic> toMap() => {
         'email': email,
-        'role': role.name,
+        'role': roleId,
         'name': name,
         'position': position,
         'salary': salary,
         'salaryPeriod': salaryPeriod.name,
         'active': active,
+        'photo': photo,
       };
 
   factory StaffMember.fromMap(Map<String, dynamic> map) => StaffMember(
         uid: map['id'] as String,
         email: map['email'] as String? ?? '',
-        role: UserRole.fromName(map['role'] as String?),
+        roleId: map['role'] as String? ?? 'cashier',
         name: map['name'] as String? ?? '',
         position: map['position'] as String? ?? '',
         salary: (map['salary'] as num?)?.toDouble() ?? 0,
         salaryPeriod: SalaryPeriod.fromName(map['salaryPeriod'] as String?),
         active: map['active'] as bool? ?? true,
+        photo: map['photo'] as String?,
       );
 }

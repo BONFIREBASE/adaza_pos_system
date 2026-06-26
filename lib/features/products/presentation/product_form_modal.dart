@@ -9,6 +9,7 @@ import 'package:image_picker/image_picker.dart';
 import '../../../core/providers.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../core/widgets/app_snackbar.dart';
+import '../domain/barcode_gen.dart';
 import '../domain/product.dart';
 import '../domain/product_repository.dart';
 import 'product_thumb.dart';
@@ -59,6 +60,15 @@ class _ProductFormModalState extends ConsumerState<_ProductFormModal> {
   bool _busy = false;
 
   bool get _isEdit => widget.product != null;
+
+  @override
+  void initState() {
+    super.initState();
+    // Auto-generate a barcode for new products (no scanner in use).
+    if (!_isEdit && _barcode.text.trim().isEmpty) {
+      _barcode.text = generateBarcode();
+    }
+  }
 
   @override
   void dispose() {
@@ -147,7 +157,27 @@ class _ProductFormModalState extends ConsumerState<_ProductFormModal> {
                 ),
                 const SizedBox(height: 16),
                 _field(_name, 'Name'),
-                _field(_barcode, 'Barcode'),
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 12),
+                  child: TextFormField(
+                    controller: _barcode,
+                    decoration: InputDecoration(
+                      labelText: 'Barcode',
+                      helperText: _isEdit
+                          ? null
+                          : 'Auto-generated. Tap the icon to regenerate.',
+                      suffixIcon: IconButton(
+                        tooltip: 'Generate new barcode',
+                        icon: const Icon(Icons.autorenew),
+                        onPressed: () => setState(
+                            () => _barcode.text = generateBarcode()),
+                      ),
+                    ),
+                    validator: (v) => (v == null || v.trim().isEmpty)
+                        ? 'Barcode is required'
+                        : null,
+                  ),
+                ),
                 _field(
                   _price,
                   'Price',

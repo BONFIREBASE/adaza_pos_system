@@ -1,4 +1,3 @@
-import '../../auth/domain/app_user.dart';
 import 'staff_member.dart';
 
 class ManagementException implements Exception {
@@ -19,10 +18,11 @@ abstract interface class ManagementRepository {
     required String email,
     required String password,
     required String name,
-    required UserRole role,
+    required String roleId,
     required String position,
     required double salary,
     required SalaryPeriod salaryPeriod,
+    String? photo,
   });
 
   /// Updates an existing staff member's profile/role/salary (not credentials).

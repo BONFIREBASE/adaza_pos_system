@@ -8,9 +8,9 @@ import '../domain/auth_repository.dart';
 
 /// Production [AuthRepository] backed by Firebase Authentication (Req 1).
 ///
-/// Identity comes from Firebase Auth; role, profile, and status come from the
-/// Firestore `users/{uid}` document (Req 1.5). Profile changes propagate live
-/// because the auth stream also listens to that document.
+/// Identity comes from Firebase Auth; the user's role id comes from
+/// `users/{uid}`, and the role's permissions come from `roles/{roleId}` — so
+/// roles are fully data-driven. The Owner role always has full access.
 class FirebaseAuthRepository implements AuthRepository {
   FirebaseAuthRepository({
     required fb.FirebaseAuth auth,
@@ -23,18 +23,37 @@ class FirebaseAuthRepository implements AuthRepository {
 
   AppUser? _cached;
 
-  /// Maps a Firebase user + their users-doc data into an [AppUser], or null if
-  /// the account has no role assigned or has been disabled.
-  AppUser? _fromData(fb.User user, Map<String, dynamic>? data) {
+  Future<AppUser?> _resolve(fb.User user, Map<String, dynamic>? data) async {
     if (data == null || data['role'] == null || data['active'] == false) {
       return null;
     }
+    final roleId = data['role'] as String;
+
+    Set<AppPermission> permissions;
+    String roleName;
+    if (roleId == kOwnerRoleId) {
+      permissions = AppPermission.values.toSet();
+      roleName = 'Owner';
+    } else {
+      final roleDoc = await _db.collection('roles').doc(roleId).get();
+      final roleData = roleDoc.data();
+      if (!roleDoc.exists || roleData == null) return null; // invalid role
+      permissions = ((roleData['permissions'] as List<dynamic>?) ?? [])
+          .map((e) => AppPermission.fromName(e as String?))
+          .whereType<AppPermission>()
+          .toSet();
+      roleName = roleData['name'] as String? ?? roleId;
+    }
+
     return AppUser(
       id: user.uid,
       email: user.email ?? (data['email'] as String? ?? ''),
-      role: UserRole.fromName(data['role'] as String?),
+      roleId: roleId,
+      roleName: roleName,
+      permissions: permissions,
       name: data['name'] as String? ?? '',
       photo: data['photo'] as String?,
+      mustChangePassword: data['mustChangePassword'] as bool? ?? false,
     );
   }
 
@@ -54,10 +73,10 @@ class FirebaseAuthRepository implements AuthRepository {
             return;
           }
           docSub = _db.collection('users').doc(user.uid).snapshots().listen(
-            (snap) {
-              final mapped = _fromData(user, snap.data());
+            (snap) async {
+              final mapped = await _resolve(user, snap.data());
               _cached = mapped;
-              controller.add(mapped);
+              if (!controller.isClosed) controller.add(mapped);
             },
             onError: (_) => controller.add(null),
           );
@@ -96,7 +115,7 @@ class FirebaseAuthRepository implements AuthRepository {
     }
 
     final snap = await _db.collection('users').doc(user.uid).get();
-    final mapped = _fromData(user, snap.data());
+    final mapped = await _resolve(user, snap.data());
     if (mapped == null) {
       await _auth.signOut();
       throw const AuthException(
@@ -119,7 +138,7 @@ class FirebaseAuthRepository implements AuthRepository {
     if (user == null) throw const AuthException('Not signed in.');
     final data = <String, dynamic>{};
     if (name != null) data['name'] = name;
-    if (photo != null) data['photo'] = photo; // '' clears the photo
+    if (photo != null) data['photo'] = photo;
     if (data.isEmpty) return;
     try {
       await _db.collection('users').doc(user.uid).set(
@@ -155,6 +174,20 @@ class FirebaseAuthRepository implements AuthRepository {
         'weak-password' => 'New password is too weak (min 6 characters).',
         _ => e.message ?? 'Could not change password.',
       });
+    }
+  }
+
+  @override
+  Future<void> markPasswordChanged() async {
+    final user = _auth.currentUser;
+    if (user == null) return;
+    try {
+      await _db.collection('users').doc(user.uid).set(
+        {'mustChangePassword': false},
+        SetOptions(merge: true),
+      );
+    } on FirebaseException catch (e) {
+      throw AuthException(e.message ?? 'Could not update account.');
     }
   }
 }

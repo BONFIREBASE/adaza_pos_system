@@ -11,6 +11,9 @@ import '../features/management/data/firestore_management_repository.dart';
 import '../features/management/domain/management_repository.dart';
 import '../features/products/data/firestore_product_repository.dart';
 import '../features/products/domain/product_repository.dart';
+import '../features/roles/data/firestore_roles_repository.dart';
+import '../features/roles/domain/role.dart';
+import '../features/roles/domain/roles_repository.dart';
 import '../features/sales/data/firestore_sale_repository.dart';
 import '../features/sales/domain/sale_repository.dart';
 import 'services/scan/camera_scanner.dart';
@@ -82,4 +85,16 @@ final financeRepositoryProvider = Provider<FinanceRepository?>((ref) {
 final managementRepositoryProvider = Provider<ManagementRepository?>((ref) {
   final sync = ref.watch(syncServiceProvider);
   return sync == null ? null : FirestoreManagementRepository(sync);
+});
+
+final rolesRepositoryProvider = Provider<RolesRepository?>((ref) {
+  final sync = ref.watch(syncServiceProvider);
+  return sync == null ? null : FirestoreRolesRepository(sync);
+});
+
+/// Live list of roles; empty while signed out.
+final rolesProvider = StreamProvider<List<Role>>((ref) {
+  final repo = ref.watch(rolesRepositoryProvider);
+  if (repo == null) return Stream.value(const []);
+  return repo.watchRoles();
 });

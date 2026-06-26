@@ -70,4 +70,33 @@ class FirestoreSaleRepository implements SaleRepository {
       return Sale(id: saleId, lines: lines, createdAt: now);
     });
   }
+
+  @override
+  Future<void> voidSale(String saleId) async {
+    return _sync.runTransaction<void>((txn) async {
+      final saleData = await txn.get(_salesCollection, saleId);
+      if (saleData == null) {
+        throw const SaleException('Sale not found.');
+      }
+      final lines = (saleData['lines'] as List<dynamic>? ?? [])
+          .map((e) => SaleLine.fromMap(e as Map<String, dynamic>))
+          .toList();
+
+      // Read current stock for each line first (reads before writes).
+      final restock = <String, int>{};
+      for (final line in lines) {
+        final data = await txn.get(_productsCollection, line.productId);
+        if (data != null) {
+          final current = (data['stockQuantity'] as num?)?.toInt() ?? 0;
+          restock[line.productId] = current + line.quantity;
+        }
+      }
+
+      restock.forEach((productId, qty) {
+        txn.update(_productsCollection, productId, {'stockQuantity': qty});
+      });
+      txn.delete(_salesCollection, saleId);
+      txn.delete(_financeCollection, 'sale_$saleId');
+    });
+  }
 }

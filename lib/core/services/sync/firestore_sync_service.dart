@@ -114,4 +114,9 @@ class _FirestoreTxn implements SyncTransaction {
   void update(String collection, String id, Map<String, dynamic> data) {
     _txn.update(_col(collection).doc(id), data);
   }
+
+  @override
+  void delete(String collection, String id) {
+    _txn.delete(_col(collection).doc(id));
+  }
 }

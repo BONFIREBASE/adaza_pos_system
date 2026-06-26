@@ -45,6 +45,14 @@ class FirestoreFinanceRepository implements FinanceRepository {
   }
 
   @override
+  Future<void> update(FinanceRecord record) async {
+    if (record.amount <= 0) {
+      throw const FinanceValidationException('Amount must be greater than 0.');
+    }
+    await _sync.updateDocument(_collection, record.id, record.toMap());
+  }
+
+  @override
   Future<void> delete(String id) => _sync.deleteDocument(_collection, id);
 
   @override

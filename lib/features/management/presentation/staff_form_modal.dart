@@ -1,29 +1,41 @@
+import 'dart:convert';
+import 'dart:typed_data';
+
+import 'package:flutter/foundation.dart'
+    show defaultTargetPlatform, TargetPlatform;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:image_picker/image_picker.dart';
 
 import '../../../core/providers.dart';
+import '../../../core/theme/app_colors.dart';
 import '../../../core/widgets/app_snackbar.dart';
 import '../../auth/domain/app_user.dart';
+import '../../roles/domain/role.dart';
 import '../domain/management_repository.dart';
 import '../domain/staff_member.dart';
 
-/// Opens the create/edit staff modal. Pass [member] to edit. [actorRole] is the
-/// signed-in user's role, used to limit which roles can be assigned.
+bool get _isMobile =>
+    defaultTargetPlatform == TargetPlatform.android ||
+    defaultTargetPlatform == TargetPlatform.iOS;
+
+/// Opens the create/edit staff modal. Pass [member] to edit. [actorIsOwner]
+/// widens which roles can be assigned (only the Owner can assign manager roles).
 Future<bool?> showStaffFormModal(
   BuildContext context, {
-  required UserRole actorRole,
+  required bool actorIsOwner,
   StaffMember? member,
 }) {
   return showDialog<bool>(
     context: context,
     barrierDismissible: false,
-    builder: (_) => _StaffFormModal(actorRole: actorRole, member: member),
+    builder: (_) => _StaffFormModal(actorIsOwner: actorIsOwner, member: member),
   );
 }
 
 class _StaffFormModal extends ConsumerStatefulWidget {
-  const _StaffFormModal({required this.actorRole, this.member});
-  final UserRole actorRole;
+  const _StaffFormModal({required this.actorIsOwner, this.member});
+  final bool actorIsOwner;
   final StaffMember? member;
 
   @override
@@ -39,18 +51,33 @@ class _StaffFormModalState extends ConsumerState<_StaffFormModal> {
       TextEditingController(text: widget.member?.position ?? '');
   late final _salary = TextEditingController(
       text: widget.member != null ? '${widget.member!.salary}' : '');
-  late UserRole _role = widget.member?.role ?? _assignable.first;
+  String? _roleId;
   late SalaryPeriod _period = widget.member?.salaryPeriod ?? SalaryPeriod.monthly;
   late bool _active = widget.member?.active ?? true;
+  late String? _photo = widget.member?.photo;
+  final _picker = ImagePicker();
   bool _busy = false;
 
   bool get _isEdit => widget.member != null;
 
-  /// Roles this actor is allowed to assign. Owner can make Admin or Cashier;
-  /// Admin can only make Cashier. Owner accounts aren't created here.
-  List<UserRole> get _assignable => widget.actorRole == UserRole.owner
-      ? const [UserRole.admin, UserRole.cashier]
-      : const [UserRole.cashier];
+  @override
+  void initState() {
+    super.initState();
+    _roleId = widget.member?.roleId;
+  }
+
+  Future<void> _pickPhoto(ImageSource source) async {
+    try {
+      final file = await _picker.pickImage(
+          source: source, maxWidth: 400, maxHeight: 400, imageQuality: 70);
+      if (file == null) return;
+      final bytes = await file.readAsBytes();
+      if (!mounted) return;
+      setState(() => _photo = base64Encode(bytes));
+    } catch (_) {
+      if (mounted) AppSnack.error(context, 'Could not load image.');
+    }
+  }
 
   @override
   void dispose() {
@@ -62,8 +89,25 @@ class _StaffFormModalState extends ConsumerState<_StaffFormModal> {
     super.dispose();
   }
 
+  /// Roles this actor may assign: never the Owner role; non-owners also can't
+  /// assign roles that include staff management.
+  List<Role> _assignable(List<Role> roles) {
+    return roles.where((r) {
+      if (r.isOwner) return false;
+      if (!widget.actorIsOwner &&
+          r.permissions.contains(AppPermission.manageUsers)) {
+        return false;
+      }
+      return true;
+    }).toList();
+  }
+
   Future<void> _save() async {
     if (!_formKey.currentState!.validate()) return;
+    if (_roleId == null) {
+      AppSnack.error(context, 'Select a role.');
+      return;
+    }
     final repo = ref.read(managementRepositoryProvider);
     if (repo == null) return;
 
@@ -73,21 +117,24 @@ class _StaffFormModalState extends ConsumerState<_StaffFormModal> {
         await repo.updateStaff(StaffMember(
           uid: widget.member!.uid,
           email: widget.member!.email,
-          role: _role,
+          roleId: _roleId!,
           name: _name.text.trim(),
           position: _position.text.trim(),
           salary: double.tryParse(_salary.text) ?? 0,
           salaryPeriod: _period,
           active: _active,
-        ));      } else {
+          photo: _photo,
+        ));
+      } else {
         await repo.createStaff(
           email: _email.text.trim(),
           password: _password.text,
           name: _name.text.trim(),
-          role: _role,
+          roleId: _roleId!,
           position: _position.text.trim(),
           salary: double.tryParse(_salary.text) ?? 0,
           salaryPeriod: _period,
+          photo: _photo,
         );
       }
       if (!mounted) return;
@@ -101,6 +148,12 @@ class _StaffFormModalState extends ConsumerState<_StaffFormModal> {
 
   @override
   Widget build(BuildContext context) {
+    final roles = _assignable(ref.watch(rolesProvider).valueOrNull ?? const []);
+    // Keep the selected role valid against the available list.
+    if (_roleId != null && !roles.any((r) => r.id == _roleId)) {
+      _roleId = null;
+    }
+
     return AlertDialog(
       title: Text(_isEdit ? 'Edit staff' : 'Add staff'),
       content: SizedBox(
@@ -112,39 +165,60 @@ class _StaffFormModalState extends ConsumerState<_StaffFormModal> {
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                _PhotoRow(
+                  photo: _photo,
+                  initial: (_name.text.trim().isNotEmpty
+                          ? _name.text.trim()
+                          : (_email.text.trim().isNotEmpty
+                              ? _email.text.trim()
+                              : '?'))
+                      .substring(0, 1)
+                      .toUpperCase(),
+                  onChoose: () => _pickPhoto(ImageSource.gallery),
+                  onCamera: _isMobile
+                      ? () => _pickPhoto(ImageSource.camera)
+                      : null,
+                  onClear:
+                      _photo == null ? null : () => setState(() => _photo = null),
+                ),
+                const SizedBox(height: 12),
                 _text(_name, 'Full name'),
-                _text(
-                  _email,
-                  'Email',
-                  enabled: !_isEdit,
-                  keyboard: TextInputType.emailAddress,
-                ),
+                _text(_email, 'Email',
+                    enabled: !_isEdit,
+                    keyboard: TextInputType.emailAddress),
                 if (!_isEdit)
-                  _text(
-                    _password,
-                    'Temporary password',
-                    obscure: true,
-                    helper: 'Minimum 6 characters. Staff can change it later.',
-                  ),
+                  _text(_password, 'Temporary password',
+                      obscure: true,
+                      helper:
+                          'Minimum 6 characters. They must change it on first login.'),
                 _text(_position, 'Position', required: false),
-                const SizedBox(height: 8),
-                const Text('Role', style: TextStyle(fontSize: 13)),
-                const SizedBox(height: 6),
-                SegmentedButton<UserRole>(
-                  segments: [
-                    for (final r in _assignable)
-                      ButtonSegment(value: r, label: Text(r.label)),
+                const SizedBox(height: 4),
+                DropdownButtonFormField<String>(
+                  initialValue: _roleId,
+                  decoration: const InputDecoration(labelText: 'Role'),
+                  items: [
+                    for (final r in roles)
+                      DropdownMenuItem(value: r.id, child: Text(r.name)),
                   ],
-                  selected: {_assignable.contains(_role) ? _role : _assignable.first},
-                  onSelectionChanged: (s) => setState(() => _role = s.first),
+                  onChanged: (v) => setState(() => _roleId = v),
+                  validator: (v) => v == null ? 'Select a role' : null,
                 ),
+                if (roles.isEmpty)
+                  const Padding(
+                    padding: EdgeInsets.only(top: 8),
+                    child: Text(
+                      'No assignable roles. Create one in Manage roles first.',
+                      style: TextStyle(
+                          color: AppColors.textSecondary, fontSize: 12),
+                    ),
+                  ),
                 const SizedBox(height: 16),
                 Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Expanded(
-                      child: _text(_salary, 'Salary', number: true,
-                          required: false),
+                      child: _text(_salary, 'Salary',
+                          number: true, required: false),
                     ),
                     const SizedBox(width: 12),
                     Expanded(
@@ -168,7 +242,7 @@ class _StaffFormModalState extends ConsumerState<_StaffFormModal> {
                     title: const Text('Account active'),
                     subtitle: const Text('Disabled accounts cannot sign in.'),
                     value: _active,
-                    activeThumbColor: const Color(0xFF1F6E6A),
+                    activeThumbColor: AppColors.teal,
                     onChanged: (v) => setState(() => _active = v),
                   ),
                 ],
@@ -226,5 +300,85 @@ class _StaffFormModalState extends ConsumerState<_StaffFormModal> {
         },
       ),
     );
+  }
+}
+
+class _PhotoRow extends StatelessWidget {
+  const _PhotoRow({
+    required this.photo,
+    required this.initial,
+    required this.onChoose,
+    required this.onCamera,
+    required this.onClear,
+  });
+
+  final String? photo;
+  final String initial;
+  final VoidCallback onChoose;
+  final VoidCallback? onCamera;
+  final VoidCallback? onClear;
+
+  @override
+  Widget build(BuildContext context) {
+    final bytes = _decode(photo);
+    return Row(
+      children: [
+        CircleAvatar(
+          radius: 30,
+          backgroundColor: AppColors.teal.withValues(alpha: 0.15),
+          backgroundImage: bytes != null ? MemoryImage(bytes) : null,
+          child: bytes == null
+              ? Text(initial,
+                  style: const TextStyle(
+                      color: AppColors.teal,
+                      fontWeight: FontWeight.w700,
+                      fontSize: 22))
+              : null,
+        ),
+        const SizedBox(width: 14),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text('Photo',
+                  style:
+                      TextStyle(color: AppColors.textSecondary, fontSize: 13)),
+              const SizedBox(height: 6),
+              Wrap(
+                spacing: 8,
+                children: [
+                  OutlinedButton.icon(
+                    onPressed: onChoose,
+                    icon: const Icon(Icons.image_outlined, size: 18),
+                    label: const Text('Choose'),
+                  ),
+                  if (onCamera != null)
+                    OutlinedButton.icon(
+                      onPressed: onCamera,
+                      icon: const Icon(Icons.photo_camera_outlined, size: 18),
+                      label: const Text('Camera'),
+                    ),
+                  if (onClear != null)
+                    TextButton.icon(
+                      onPressed: onClear,
+                      icon: const Icon(Icons.close, size: 18),
+                      label: const Text('Remove'),
+                    ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  static Uint8List? _decode(String? b64) {
+    if (b64 == null || b64.isEmpty) return null;
+    try {
+      return base64Decode(b64);
+    } catch (_) {
+      return null;
+    }
   }
 }

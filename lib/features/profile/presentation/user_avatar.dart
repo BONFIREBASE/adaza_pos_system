@@ -13,11 +13,11 @@ class UserAvatar extends StatelessWidget {
   final AppUser user;
   final double radius;
 
-  Color get _roleColor => switch (user.role) {
-        UserRole.owner => AppColors.gold,
-        UserRole.admin => AppColors.teal,
-        UserRole.cashier => AppColors.copper,
-      };
+  Color get _roleColor => user.isOwner
+      ? AppColors.gold
+      : (user.can(AppPermission.manageUsers)
+          ? AppColors.teal
+          : AppColors.copper);
 
   @override
   Widget build(BuildContext context) {

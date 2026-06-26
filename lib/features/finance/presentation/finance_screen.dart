@@ -8,16 +8,21 @@ import '../../../core/theme/app_theme.dart';
 import '../../../core/widgets/app_nav_scaffold.dart';
 import '../../../core/widgets/app_snackbar.dart';
 import '../../../core/widgets/skeleton.dart';
+import '../../auth/domain/app_user.dart';
 import '../domain/finance_record.dart';
 import '../domain/finance_repository.dart';
 
-/// Income and expense list with quick entry (Req 6).
+/// Income and expense list (Req 6). Owner/Admin can edit/delete manual entries.
+/// Sale-derived income is locked (void the sale to reverse it).
 class FinanceScreen extends ConsumerWidget {
   const FinanceScreen({super.key});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final repo = ref.watch(financeRepositoryProvider);
+    final canManage =
+        ref.watch(currentUserProvider)?.can(AppPermission.manageFinance) ??
+            false;
     final money = NumberFormat.currency(locale: 'en_PH', symbol: '₱');
     final dateFmt = DateFormat.yMMMd();
 
@@ -25,7 +30,7 @@ class FinanceScreen extends ConsumerWidget {
       title: 'Income & Expenses',
       currentRoute: '/finance',
       floatingActionButton: FloatingActionButton.extended(
-        onPressed: repo == null ? null : () => _showAddSheet(context, ref),
+        onPressed: repo == null ? null : () => _showSheet(context, ref),
         icon: const Icon(Icons.add),
         label: const Text('Add entry'),
       ),
@@ -40,28 +45,32 @@ class FinanceScreen extends ConsumerWidget {
                   return const Center(child: Text('No records yet.'));
                 }
                 return ListView.builder(
+                  padding: const EdgeInsets.only(bottom: 96),
                   itemCount: records.length,
                   itemBuilder: (context, i) {
                     final r = records[i];
-                    final income = r.type == FinanceType.income;
-                    return Card(
-                      margin: const EdgeInsets.symmetric(
-                          horizontal: 16, vertical: 6),
-                      child: ListTile(
-                        leading: Icon(
-                          income ? Icons.arrow_downward : Icons.arrow_upward,
-                          color: income ? AppColors.success : AppColors.error,
-                        ),
-                        title: Text(r.category),
-                        subtitle: Text(dateFmt.format(r.date)),
-                        trailing: Text(
-                          '${income ? '+' : '-'}${money.format(r.amount)}',
-                          style: AppTheme.mono(
-                            fontWeight: FontWeight.w700,
-                            color:
-                                income ? AppColors.success : AppColors.error,
-                          ),
-                        ),
+                    final card = _RecordCard(
+                      record: r,
+                      money: money,
+                      dateFmt: dateFmt,
+                    );
+
+                    // Editable only for managers, and never sale-derived income.
+                    if (!canManage || r.isFromSale) return card;
+
+                    return Dismissible(
+                      key: ValueKey(r.id),
+                      direction: DismissDirection.endToStart,
+                      background: const SizedBox.shrink(),
+                      secondaryBackground: _deleteBg(),
+                      confirmDismiss: (_) async {
+                        await _delete(context, ref, r);
+                        return false;
+                      },
+                      child: GestureDetector(
+                        onDoubleTap: () =>
+                            _showSheet(context, ref, existing: r),
+                        child: card,
                       ),
                     );
                   },
@@ -71,10 +80,63 @@ class FinanceScreen extends ConsumerWidget {
     );
   }
 
-  void _showAddSheet(BuildContext context, WidgetRef ref) {
-    final amount = TextEditingController();
-    final category = TextEditingController();
-    FinanceType type = FinanceType.expense;
+  Widget _deleteBg() => Container(
+        margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+        padding: const EdgeInsets.symmetric(horizontal: 22),
+        alignment: Alignment.centerRight,
+        decoration: BoxDecoration(
+          color: AppColors.error,
+          borderRadius: BorderRadius.circular(16),
+        ),
+        child: const Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.delete_outline, color: Colors.white),
+            SizedBox(width: 8),
+            Text('Delete',
+                style: TextStyle(
+                    color: Colors.white, fontWeight: FontWeight.w700)),
+          ],
+        ),
+      );
+
+  Future<void> _delete(
+      BuildContext context, WidgetRef ref, FinanceRecord r) async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Delete entry'),
+        content: Text('Delete "${r.category}"? This cannot be undone.'),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Cancel')),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: AppColors.error),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+    if (confirm != true) return;
+    final repo = ref.read(financeRepositoryProvider);
+    if (repo == null) return;
+    try {
+      await repo.delete(r.id);
+      if (context.mounted) AppSnack.success(context, 'Entry deleted.');
+    } catch (_) {
+      if (context.mounted) AppSnack.error(context, 'Could not delete entry.');
+    }
+  }
+
+  void _showSheet(BuildContext context, WidgetRef ref,
+      {FinanceRecord? existing}) {
+    final isEdit = existing != null;
+    final amount = TextEditingController(
+        text: existing != null ? '${existing.amount}' : '');
+    final category = TextEditingController(text: existing?.category ?? '');
+    FinanceType type = existing?.type ?? FinanceType.expense;
 
     showModalBottomSheet<void>(
       context: context,
@@ -90,6 +152,9 @@ class FinanceScreen extends ConsumerWidget {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
+              Text(isEdit ? 'Edit entry' : 'Add entry',
+                  style: Theme.of(ctx).textTheme.titleLarge),
+              const SizedBox(height: 16),
               SegmentedButton<FinanceType>(
                 segments: const [
                   ButtonSegment(
@@ -118,31 +183,92 @@ class FinanceScreen extends ConsumerWidget {
                   onPressed: () async {
                     final repo = ref.read(financeRepositoryProvider);
                     if (repo == null) return;
+                    final record = FinanceRecord(
+                      id: existing?.id ?? '_',
+                      type: type,
+                      amount: double.tryParse(amount.text) ?? 0,
+                      category: category.text.trim().isEmpty
+                          ? type.name
+                          : category.text.trim(),
+                      date: existing?.date ?? DateTime.now(),
+                      note: existing?.note ?? '',
+                      saleId: existing?.saleId,
+                    );
                     try {
-                      await repo.create(
-                        FinanceRecord(
-                          id: '_',
-                          type: type,
-                          amount: double.tryParse(amount.text) ?? 0,
-                          category: category.text.trim().isEmpty
-                              ? type.name
-                              : category.text.trim(),
-                          date: DateTime.now(),
-                        ),
-                      );
+                      if (isEdit) {
+                        await repo.update(record);
+                      } else {
+                        await repo.create(record);
+                      }
                       if (ctx.mounted) Navigator.pop(ctx);
                       if (context.mounted) {
-                        AppSnack.success(context, 'Entry added.');
+                        AppSnack.success(context,
+                            isEdit ? 'Entry updated.' : 'Entry added.');
                       }
                     } on FinanceValidationException catch (e) {
                       if (!ctx.mounted) return;
                       AppSnack.error(ctx, e.message);
                     }
                   },
-                  child: const Text('Save'),
+                  child: Text(isEdit ? 'Save changes' : 'Save'),
                 ),
               ),
             ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _RecordCard extends StatelessWidget {
+  const _RecordCard({
+    required this.record,
+    required this.money,
+    required this.dateFmt,
+  });
+
+  final FinanceRecord record;
+  final NumberFormat money;
+  final DateFormat dateFmt;
+
+  @override
+  Widget build(BuildContext context) {
+    final income = record.type == FinanceType.income;
+    return Card(
+      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+      child: ListTile(
+        leading: Icon(
+          income ? Icons.arrow_downward : Icons.arrow_upward,
+          color: income ? AppColors.success : AppColors.error,
+        ),
+        title: Row(
+          children: [
+            Flexible(child: Text(record.category)),
+            if (record.isFromSale) ...[
+              const SizedBox(width: 8),
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                decoration: BoxDecoration(
+                  color: AppColors.teal.withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                child: const Text('From sale',
+                    style: TextStyle(
+                        color: AppColors.teal,
+                        fontSize: 11,
+                        fontWeight: FontWeight.w700)),
+              ),
+            ],
+          ],
+        ),
+        subtitle: Text(dateFmt.format(record.date)),
+        trailing: Text(
+          '${income ? '+' : '-'}${money.format(record.amount)}',
+          style: AppTheme.mono(
+            fontWeight: FontWeight.w700,
+            color: income ? AppColors.success : AppColors.error,
           ),
         ),
       ),

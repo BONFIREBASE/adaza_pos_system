@@ -6,11 +6,12 @@ import 'package:go_router/go_router.dart';
 
 import '../../features/auth/domain/app_user.dart';
 import '../../features/auth/presentation/landing_screen.dart';
+import '../../features/auth/presentation/set_password_screen.dart';
 import '../../features/dashboard/presentation/dashboard_screen.dart';
 import '../../features/finance/presentation/finance_screen.dart';
 import '../../features/products/presentation/products_screen.dart';
 import '../../features/sales/presentation/sales_screen.dart';
-import '../../features/lookup/presentation/lookup_screen.dart';
+import '../../features/labels/labels_screen.dart';
 import '../../features/management/presentation/management_screen.dart';
 import '../providers.dart';
 
@@ -41,7 +42,7 @@ class _AuthRefresh extends ChangeNotifier {
 /// Maps a route to the permission required to view it.
 const _routePermissions = <String, AppPermission>{
   '/products': AppPermission.manageProducts,
-  '/lookup': AppPermission.recordSales,
+  '/labels': AppPermission.manageProducts,
   '/sales': AppPermission.recordSales,
   '/finance': AppPermission.manageFinance,
   '/management': AppPermission.manageUsers,
@@ -63,6 +64,12 @@ final routerProvider = Provider<GoRouter>((ref) {
       if (!refresh.signedIn) return onSignIn ? null : '/sign-in';
       if (onSignIn) return '/dashboard';
 
+      // Force first-login password change for new staff.
+      final mustChange = refresh.user?.mustChangePassword ?? false;
+      final onSetPw = state.matchedLocation == '/set-password';
+      if (mustChange) return onSetPw ? null : '/set-password';
+      if (onSetPw) return '/dashboard';
+
       // Enforce per-route permissions: send users without access back to the
       // dashboard rather than letting a direct URL bypass the dock filtering.
       final loc = state.matchedLocation;
@@ -79,6 +86,10 @@ final routerProvider = Provider<GoRouter>((ref) {
         builder: (_, __) => const LandingScreen(),
       ),
       GoRoute(
+        path: '/set-password',
+        builder: (_, __) => const SetPasswordScreen(),
+      ),
+      GoRoute(
         path: '/dashboard',
         builder: (_, __) => const DashboardScreen(),
       ),
@@ -87,8 +98,8 @@ final routerProvider = Provider<GoRouter>((ref) {
         builder: (_, __) => const ProductsScreen(),
       ),
       GoRoute(
-        path: '/lookup',
-        builder: (_, __) => const LookupScreen(),
+        path: '/labels',
+        builder: (_, __) => const LabelsScreen(),
       ),
       GoRoute(
         path: '/sales',

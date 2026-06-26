@@ -1,3 +1,6 @@
+import 'dart:convert';
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
@@ -9,30 +12,79 @@ import '../../../core/widgets/app_nav_scaffold.dart';
 import '../../../core/widgets/app_snackbar.dart';
 import '../../../core/widgets/skeleton.dart';
 import '../../auth/domain/app_user.dart';
+import '../../roles/domain/role.dart';
 import '../domain/management_repository.dart';
 import '../domain/staff_member.dart';
+import 'roles_screen.dart';
 import 'staff_form_modal.dart';
 
 final _money = NumberFormat.currency(locale: 'en_PH', symbol: '₱');
 
+Color roleColor(Role? role) {
+  if (role == null) return AppColors.copper;
+  if (role.isOwner) return AppColors.gold;
+  if (role.permissions.contains(AppPermission.manageUsers)) {
+    return AppColors.teal;
+  }
+  return AppColors.copper;
+}
+
+Uint8List? _decodePhoto(String? b64) {
+  if (b64 == null || b64.isEmpty) return null;
+  try {
+    return base64Decode(b64);
+  } catch (_) {
+    return null;
+  }
+}
+
 /// Staff & account management (Req 1.5): Owner/Admin control who can access the
 /// POS, their roles, status, and salary.
-class ManagementScreen extends ConsumerWidget {
+class ManagementScreen extends ConsumerStatefulWidget {
   const ManagementScreen({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<ManagementScreen> createState() => _ManagementScreenState();
+}
+
+class _ManagementScreenState extends ConsumerState<ManagementScreen> {
+  @override
+  void initState() {
+    super.initState();
+    // Seed the built-in roles on first visit (Owner only — rules permit it).
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final me = ref.read(currentUserProvider);
+      if (me?.isOwner ?? false) {
+        ref.read(rolesRepositoryProvider)?.ensureDefaults();
+      }
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final repo = ref.watch(managementRepositoryProvider);
     final me = ref.watch(currentUserProvider);
+    final roles = ref.watch(rolesProvider).valueOrNull ?? const <Role>[];
+    final rolesById = {for (final r in roles) r.id: r};
 
     return AppNavScaffold(
       title: 'Management',
       currentRoute: '/management',
-      floatingActionButton: (me?.role == UserRole.owner)
+      actions: [
+        if (me?.isOwner ?? false)
+          TextButton.icon(
+            onPressed: () => Navigator.of(context).push(
+              MaterialPageRoute(builder: (_) => const RolesScreen()),
+            ),
+            icon: const Icon(Icons.shield_outlined, size: 18),
+            label: const Text('Manage roles'),
+          ),
+      ],
+      floatingActionButton: (me?.isOwner ?? false)
           ? FloatingActionButton.extended(
               onPressed: () async {
                 final created =
-                    await showStaffFormModal(context, actorRole: me!.role);
+                    await showStaffFormModal(context, actorIsOwner: true);
                 if (created == true && context.mounted) {
                   AppSnack.success(context, 'Account created.');
                 }
@@ -47,8 +99,12 @@ class ManagementScreen extends ConsumerWidget {
               stream: repo.watchStaff(),
               builder: (context, snap) {
                 if (!snap.hasData) return const SkeletonList();
-                final staff = snap.data!;
-                return _Body(staff: staff, me: me, repo: repo);
+                return _Body(
+                  staff: snap.data!,
+                  me: me,
+                  repo: repo,
+                  rolesById: rolesById,
+                );
               },
             ),
     );
@@ -56,18 +112,25 @@ class ManagementScreen extends ConsumerWidget {
 }
 
 class _Body extends StatelessWidget {
-  const _Body({required this.staff, required this.me, required this.repo});
+  const _Body({
+    required this.staff,
+    required this.me,
+    required this.repo,
+    required this.rolesById,
+  });
 
   final List<StaffMember> staff;
   final AppUser me;
   final ManagementRepository repo;
+  final Map<String, Role> rolesById;
 
   bool _canModify(StaffMember m) {
-    if (m.role == UserRole.owner) return false; // never manage the owner here
-    if (m.uid == me.id) return false; // not yourself
-    if (me.role == UserRole.admin && m.role == UserRole.admin) {
-      return false; // admins can't manage other admins
-    }
+    if (m.isOwner) return false;
+    if (m.uid == me.id) return false;
+    final targetRole = rolesById[m.roleId];
+    final targetManages =
+        targetRole?.permissions.contains(AppPermission.manageUsers) ?? false;
+    if (!me.isOwner && targetManages) return false;
     return true;
   }
 
@@ -105,20 +168,25 @@ class _Body extends StatelessWidget {
         const SizedBox(height: 24),
         Text('Accounts', style: Theme.of(context).textTheme.titleLarge),
         const SizedBox(height: 8),
-        ...staff.map((s) => _StaffRow(
-              member: s,
-              canModify: _canModify(s),
-              isMe: s.uid == me.id,
-              onEdit: () => _edit(context, s),
-              onRemove: () => _remove(context, s),
-            )),
+        ...staff.map((s) {
+          final role = rolesById[s.roleId];
+          return _StaffRow(
+            member: s,
+            roleName: s.isOwner ? 'Owner' : (role?.name ?? s.roleId),
+            color: roleColor(role ?? (s.isOwner ? Role.defaults.first : null)),
+            canModify: _canModify(s),
+            isMe: s.uid == me.id,
+            onEdit: () => _edit(context, s),
+            onRemove: () => _remove(context, s),
+          );
+        }),
       ],
     );
   }
 
   Future<void> _edit(BuildContext context, StaffMember s) async {
-    final saved =
-        await showStaffFormModal(context, actorRole: me.role, member: s);
+    final saved = await showStaffFormModal(context,
+        actorIsOwner: me.isOwner, member: s);
     if (saved == true && context.mounted) {
       AppSnack.success(context, 'Account updated.');
     }
@@ -211,6 +279,8 @@ class _Stat extends StatelessWidget {
 class _StaffRow extends StatelessWidget {
   const _StaffRow({
     required this.member,
+    required this.roleName,
+    required this.color,
     required this.canModify,
     required this.isMe,
     required this.onEdit,
@@ -218,16 +288,12 @@ class _StaffRow extends StatelessWidget {
   });
 
   final StaffMember member;
+  final String roleName;
+  final Color color;
   final bool canModify;
   final bool isMe;
   final VoidCallback onEdit;
   final VoidCallback onRemove;
-
-  Color get _roleColor => switch (member.role) {
-        UserRole.owner => AppColors.gold,
-        UserRole.admin => AppColors.teal,
-        UserRole.cashier => AppColors.copper,
-      };
 
   @override
   Widget build(BuildContext context) {
@@ -235,12 +301,12 @@ class _StaffRow extends StatelessWidget {
       margin: const EdgeInsets.symmetric(vertical: 6),
       child: _content(),
     );
-
     if (!canModify) return card;
 
     return Dismissible(
       key: ValueKey(member.uid),
-      direction: DismissDirection.endToStart, // swipe left to delete
+      direction: DismissDirection.endToStart,
+      background: const SizedBox.shrink(),
       secondaryBackground: Container(
         margin: const EdgeInsets.symmetric(vertical: 6),
         padding: const EdgeInsets.symmetric(horizontal: 22),
@@ -260,10 +326,9 @@ class _StaffRow extends StatelessWidget {
           ],
         ),
       ),
-      background: const SizedBox.shrink(),
       confirmDismiss: (_) async {
         onRemove();
-        return false; // the live list updates after removal
+        return false;
       },
       child: GestureDetector(onDoubleTap: onEdit, child: card),
     );
@@ -273,16 +338,20 @@ class _StaffRow extends StatelessWidget {
     final initial = member.displayName.isNotEmpty
         ? member.displayName[0].toUpperCase()
         : '?';
+    final bytes = _decodePhoto(member.photo);
     return Padding(
       padding: const EdgeInsets.all(12),
       child: Row(
         children: [
           CircleAvatar(
             radius: 24,
-            backgroundColor: _roleColor.withValues(alpha: 0.18),
-            child: Text(initial,
-                style: TextStyle(
-                    color: _roleColor, fontWeight: FontWeight.w700)),
+            backgroundColor: color.withValues(alpha: 0.18),
+            backgroundImage: bytes != null ? MemoryImage(bytes) : null,
+            child: bytes == null
+                ? Text(initial,
+                    style:
+                        TextStyle(color: color, fontWeight: FontWeight.w700))
+                : null,
           ),
           const SizedBox(width: 14),
           Expanded(
@@ -298,7 +367,7 @@ class _StaffRow extends StatelessWidget {
                               fontWeight: FontWeight.w600, fontSize: 15)),
                     ),
                     const SizedBox(width: 8),
-                    _Chip(label: member.role.label, color: _roleColor),
+                    _Chip(label: roleName, color: color),
                     if (isMe) ...[
                       const SizedBox(width: 6),
                       const _Chip(label: 'You', color: AppColors.bronze),

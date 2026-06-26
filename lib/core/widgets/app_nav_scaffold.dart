@@ -50,10 +50,10 @@ class AppNavScaffold extends ConsumerWidget {
       permission: AppPermission.manageProducts,
     ),
     (
-      route: '/lookup',
+      route: '/labels',
       icon: Icons.barcode_reader,
-      label: 'Lookup',
-      permission: AppPermission.recordSales,
+      label: 'Labels',
+      permission: AppPermission.manageProducts,
     ),
     (
       route: '/sales',
@@ -213,7 +213,7 @@ class _ProfileMenu extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final canExport = user.can(AppPermission.manageFinance);
-    final isOwner = user.role == UserRole.owner;
+    final isOwner = user.isOwner;
     final compact = MediaQuery.sizeOf(context).width < 560;
 
     return PopupMenuButton<String>(
@@ -233,6 +233,8 @@ class _ProfileMenu extends ConsumerWidget {
             showExportModal(context);
           case 'settings':
             showSettingsModal(context);
+          case 'about':
+            showAboutModal(context);
           case 'signout':
             ref.read(authRepositoryProvider).signOut();
         }
@@ -252,7 +254,7 @@ class _ProfileMenu extends ConsumerWidget {
                       style: const TextStyle(
                           fontWeight: FontWeight.w700,
                           color: AppColors.textPrimary)),
-                  Text(user.role.label,
+                  Text(user.roleLabel,
                       style: const TextStyle(
                           color: AppColors.textSecondary, fontSize: 12)),
                 ],
@@ -296,6 +298,14 @@ class _ProfileMenu extends ConsumerWidget {
             ),
           ),
         const PopupMenuDivider(),
+        const PopupMenuItem(
+          value: 'about',
+          child: ListTile(
+            leading: Icon(Icons.info_outline),
+            title: Text('About'),
+            contentPadding: EdgeInsets.zero,
+          ),
+        ),
         const PopupMenuItem(
           value: 'signout',
           child: ListTile(

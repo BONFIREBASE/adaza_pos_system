@@ -32,4 +32,7 @@ abstract interface class AuthRepository {
     required String currentPassword,
     required String newPassword,
   });
+
+  /// Clears the "must change password" flag on the current user's account.
+  Future<void> markPasswordChanged();
 }

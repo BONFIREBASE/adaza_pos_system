@@ -49,4 +49,5 @@ abstract interface class SyncTransaction {
   Future<Map<String, dynamic>?> get(String collection, String id);
   void set(String collection, String id, Map<String, dynamic> data);
   void update(String collection, String id, Map<String, dynamic> data);
+  void delete(String collection, String id);
 }
